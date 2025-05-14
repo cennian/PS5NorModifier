@@ -2,10 +2,11 @@
 #include <QStandardPaths>
 #include <QDir>
 #include <QDebug>
-#include <QMessageBox> // For UX friendly error dialogs (can be replaced with QML popups)
 #include <QXmlStreamReader>
 #include <QIODevice>
 #include <QTextStream> // For reading file content as hex
+#include <QRegularExpression> // For hex string manipulation
+#include <QUrlQuery> // Ensure this line is present and processed
 
 Backend::Backend(QObject *parent) : QObject(parent)
 {
@@ -211,16 +212,15 @@ void Backend::onDownloadFinished(QNetworkReply *reply)
             file.write(data);
             file.close();
             setStatusMessage("Offline database updated successfully.");
-            QMessageBox::information(nullptr, "Offline Database Updated!", "The most recent offline database has been updated successfully.");
             emit databaseDownloadFinished(true);
         } else {
             setStatusMessage("Error: Could not save database file: " + file.errorString());
-            QMessageBox::warning(nullptr, "Error", "Could not save database file: " + file.errorString());
+            emit errorOccurred("Database Save Error", "Could not save database file: " + file.errorString());
             emit databaseDownloadFinished(false);
         }
     } else {
         setStatusMessage("Error downloading database: " + reply->errorString());
-        QMessageBox::warning(nullptr, "Download Error", "Error downloading database: " + reply->errorString());
+        emit errorOccurred("Download Error", "Error downloading database: " + reply->errorString());
         emit databaseDownloadFinished(false);
     }
     reply->deleteLater();
@@ -288,6 +288,22 @@ QString Backend::parseErrorsOffline(const QString &errorCode)
     }
 }
 
+// Helper function to parse NOR details (stubbed)
+QVariantMap Backend::parseNorDetails(const QByteArray &fileData) {
+    QVariantMap details;
+    // Placeholder values - actual parsing logic is complex and hardware-specific
+    // This logic would replicate the C# version's offset reading and string conversions.
+    details["model"] = "Unknown (Parsing not implemented)";
+    details["moboSerial"] = "Unknown (Parsing not implemented)";
+    details["boardSerial"] = "Unknown (Parsing not implemented)";
+    details["wifiMac"] = "Unknown (Parsing not implemented)";
+    details["lanMac"] = "Unknown (Parsing not implemented)";
+    details["variant"] = "Unknown (Parsing not implemented)";
+    details["size"] = QString("%1 bytes (%2MB)").arg(fileData.size()).arg(fileData.size() / 1024.0 / 1024.0, 0, 'f', 2);
+
+    return details;
+}
+
 QString Backend::openFile(const QString &filePath)
 {
     QString cleanFilePath = filePath;
@@ -299,17 +315,67 @@ QString Backend::openFile(const QString &filePath)
     if (!file.open(QIODevice::ReadOnly)) {
         setStatusMessage("Error: Could not open file: " + file.errorString());
         emit errorOccurred("File Error", "Could not open file: " + file.errorString());
-        return ""; // Return empty or error string
+        return "";
     }
 
     QByteArray fileData = file.readAll();
     file.close();
 
     QString hexData = QString(fileData.toHex(' ')); // Space separated hex
+    QVariantMap details = parseNorDetails(fileData);
     
     setStatusMessage("File opened successfully: " + cleanFilePath);
-    emit fileOpened(cleanFilePath, hexData);
-    return hexData; // Or emit a signal with the content
+    emit fileOpened(cleanFilePath, hexData, details); // Emit with details
+    return hexData;
+}
+
+// Helper function to apply NOR modifications (stubbed)
+QByteArray Backend::applyNorModifications(QByteArray originalData, const QVariantMap &modifications) {
+    qDebug() << "applyNorModifications called with: " << modifications;
+    setStatusMessage("NOR modification logic not fully implemented in backend.");
+    return originalData; 
+}
+
+bool Backend::saveModifiedFile(const QString &filePathToSave, const QString &originalFilePath, const QVariantMap &modifications)
+{
+    QString cleanFilePathToSave = filePathToSave;
+    if (cleanFilePathToSave.startsWith("file:///")) {
+        cleanFilePathToSave = QUrl(filePathToSave).toLocalFile();
+    }
+
+    QString cleanOriginalFilePath = originalFilePath;
+     if (cleanOriginalFilePath.startsWith("file:///")) {
+        cleanOriginalFilePath = QUrl(originalFilePath).toLocalFile();
+    }
+
+    QFile origFile(cleanOriginalFilePath);
+    if (!origFile.open(QIODevice::ReadOnly)) {
+        setStatusMessage("Error: Could not open original file for reading: " + origFile.errorString());
+        emit errorOccurred("File Error", "Could not open original file: " + origFile.errorString());
+        return false;
+    }
+    QByteArray originalData = origFile.readAll();
+    origFile.close();
+
+    QByteArray modifiedData = applyNorModifications(originalData, modifications);
+
+    QFile file(cleanFilePathToSave);
+    if (!file.open(QIODevice::WriteOnly)) {
+        setStatusMessage("Error: Could not open file for writing: " + file.errorString());
+        emit errorOccurred("File Error", "Could not open file for writing: " + file.errorString());
+        return false;
+    }
+
+    if (file.write(modifiedData) == -1) {
+        setStatusMessage("Error: Could not write to file: " + file.errorString());
+        emit errorOccurred("File Error", "Could not write to file: " + file.errorString());
+        file.close();
+        return false;
+    }
+
+    file.close();
+    setStatusMessage("File saved successfully with modifications: " + cleanFilePathToSave);
+    return true;
 }
 
 bool Backend::saveFile(const QString &filePath, const QString &hexData)
@@ -340,4 +406,110 @@ bool Backend::saveFile(const QString &filePath, const QString &hexData)
     file.close();
     setStatusMessage("File saved successfully: " + cleanFilePath);
     return true;
+}
+
+QString Backend::parseErrorsOnline(const QString &errorCode) {
+    if (errorCode.isEmpty()) {
+        emit errorOccurred("Input Error", "Error code cannot be empty.");
+        return "Error: Empty error code"; 
+    }
+    QUrl url("http://uartcodes.com/xml.php");
+    QUrlQuery query; // This requires <QUrlQuery> to be included
+    query.addQueryItem("errorCode", errorCode);
+    url.setQuery(query);
+
+    QNetworkRequest request(url);
+    setStatusMessage("Fetching online description for " + errorCode + "...");
+    QNetworkReply *reply = m_networkManager->get(request);
+    connect(reply, &QNetworkReply::finished, this, [this, reply, errorCode]() {
+        onOnlineErrorCheckFinished(reply);
+    });
+    return "Fetching description..."; 
+}
+
+void Backend::onOnlineErrorCheckFinished(QNetworkReply *reply) {
+    QString resultText;
+    if (reply->error() == QNetworkReply::NoError) {
+        QByteArray data = reply->readAll();
+        QXmlStreamReader xml(data);
+        QString description = "Description not found or error parsing response.";
+        
+        // Construct QUrlQuery from the reply URL's query string
+        QUrlQuery query(reply->url().query());
+        QString parsedErrorCode = query.queryItemValue("errorCode"); 
+
+        bool inErrorCodeOuter = false;
+        QString currentCode, currentDesc;
+
+        while (!xml.atEnd() && !xml.hasError()) {
+            QXmlStreamReader::TokenType token = xml.readNext();
+            if (token == QXmlStreamReader::StartElement) {
+                if (xml.name().toString() == "errorCodes") { // Root
+                    // continue
+                } else if (xml.name().toString() == "errorCode") {
+                    inErrorCodeOuter = true;
+                    currentCode.clear();
+                    currentDesc.clear();
+                } else if (inErrorCodeOuter && xml.name().toString() == "ErrorCode") {
+                    currentCode = xml.readElementText();
+                } else if (inErrorCodeOuter && xml.name().toString() == "Description") {
+                    currentDesc = xml.readElementText();
+                }
+            } else if (token == QXmlStreamReader::EndElement) {
+                if (xml.name().toString() == "errorCode") {
+                    if (currentCode == parsedErrorCode || parsedErrorCode.isEmpty()) { // If only one result, it's ours
+                        description = currentDesc;
+                        // If parsedErrorCode was empty and we got a code, update it
+                        if (parsedErrorCode.isEmpty() && !currentCode.isEmpty()) parsedErrorCode = currentCode;
+                        break; 
+                    }
+                    inErrorCodeOuter = false;
+                }
+            }
+        }
+        if (xml.hasError()) {
+            description = "Error parsing XML response: " + xml.errorString();
+        }
+        resultText = "Error code: " + parsedErrorCode + "\nDescription: " + description;
+        setStatusMessage("Online check for " + parsedErrorCode + " complete.");
+    } else {
+        resultText = "Error fetching online description: " + reply->errorString();
+        setStatusMessage(resultText);
+    }
+    emit onlineErrorResultReady(resultText);
+    reply->deleteLater();
+}
+
+void Backend::readAllErrorLogs() {
+    if (!m_serialPort->isOpen()) {
+        setStatusMessage("Serial port not connected.");
+        emit errorOccurred("Serial Command Error", "Serial port is not connected.");
+        emit allErrorLogsData("Error: Not connected");
+        return;
+    }
+    QString aggregatedLogs = "Reading all error logs:\n";
+    bool anErrorOccurred = false;
+
+    for (int i = 0; i <= 10; ++i) {
+        QString command = QString("errlog %1").arg(i);
+        QString response = sendSerialCommand(command); // sendSerialCommand is blocking
+        aggregatedLogs += QString("Cmd: %1 -> Response: %2\n").arg(command).arg(response);
+        if (response.startsWith("Error:")) {
+            anErrorOccurred = true;
+        }
+    }
+    setStatusMessage(anErrorOccurred ? "Finished reading logs with some errors." : "Finished reading all error logs.");
+    emit allErrorLogsData(aggregatedLogs);
+}
+
+void Backend::clearConsoleErrorLogs() {
+    if (!m_serialPort->isOpen()) {
+        setStatusMessage("Serial port not connected.");
+        emit errorOccurred("Serial Command Error", "Serial port is not connected.");
+        emit consoleErrorLogsCleared("Error: Not connected");
+        return;
+    }
+    QString response = sendSerialCommand("errlog clear");
+    setStatusMessage("Clear error logs command sent. Response: " + response);
+    emit consoleErrorLogsCleared(response);
 }

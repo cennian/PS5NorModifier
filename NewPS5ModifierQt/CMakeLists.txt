@@ -8,7 +8,7 @@ set(CMAKE_AUTOUIC ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Network SerialPort Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Network SerialPort Widgets QuickControls2)
 
 qt_standard_project_setup()
 
@@ -32,6 +32,7 @@ target_link_libraries(PS5NorModifierApp PRIVATE
     Qt6::Network
     Qt6::SerialPort
     Qt6::Widgets
+    Qt6::QuickControls2
 )
 
 install(TARGETS PS5NorModifierApp

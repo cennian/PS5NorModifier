@@ -6,11 +6,12 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QFile>
-#include <QXmlStreamReader> // Required for parseErrorsOffline
+#include <QXmlStreamReader> 
 #include <QSerialPort>
 #include <QSerialPortInfo>
 #include <QStringList>
-#include <QUrl> // Required for QUrl::toLocalFile
+#include <QUrl> 
+#include <QVariantMap> 
 
 class Backend : public QObject
 {
@@ -35,13 +36,18 @@ public:
 
     Q_INVOKABLE void downloadDatabaseAsync();
     Q_INVOKABLE QString parseErrorsOffline(const QString &errorCode);
-    Q_INVOKABLE QString openFile(const QString &filePath); // Returns hex string or empty on error
-    Q_INVOKABLE bool saveFile(const QString &filePath, const QString &hexData);
+    Q_INVOKABLE QString parseErrorsOnline(const QString &errorCode); 
+    Q_INVOKABLE QString openFile(const QString &filePath); 
+    Q_INVOKABLE bool saveFile(const QString &filePath, const QString &hexData); 
+    Q_INVOKABLE bool saveModifiedFile(const QString &filePath, const QString &originalFilePath, const QVariantMap &modifications); 
+
     Q_INVOKABLE void refreshSerialPorts();
-    Q_INVOKABLE bool connectSerialPort(); // Connects to currentSerialPort
-    Q_INVOKABLE bool connectSerialPortByName(const QString &portName); // Connects to a specific port
+    Q_INVOKABLE bool connectSerialPort(); 
+    Q_INVOKABLE bool connectSerialPortByName(const QString &portName); 
     Q_INVOKABLE void disconnectSerialPort();
-    Q_INVOKABLE QString sendSerialCommand(const QString &command); // Returns response or error string
+    Q_INVOKABLE QString sendSerialCommand(const QString &command); 
+    Q_INVOKABLE void readAllErrorLogs(); 
+    Q_INVOKABLE void clearConsoleErrorLogs(); 
 
 signals:
     void statusMessageChanged();
@@ -49,24 +55,29 @@ signals:
     void availableSerialPortsChanged();
     void currentSerialPortChanged();
     void serialPortConnectedChanged(bool connected);
-    void errorOccurred(const QString &title, const QString &message); // For UX friendly errors
-    void fileOpened(const QString &fileName, const QString &fileContentHex);
+    void errorOccurred(const QString &title, const QString &message); 
+    void fileOpened(const QString &fileName, const QString &fileContentHex, const QVariantMap &details); 
+    void onlineErrorResultReady(const QString &result); 
+    void allErrorLogsData(const QString &data); 
+    void consoleErrorLogsCleared(const QString &result); 
 
 private slots:
     void onDownloadFinished(QNetworkReply *reply);
+    void onOnlineErrorCheckFinished(QNetworkReply *reply); 
     void handleSerialError(QSerialPort::SerialPortError error);
-    void handleSerialDataReady(); // For asynchronous data reading (optional for now)
+    void handleSerialDataReady(); 
 
 private:
     QNetworkAccessManager *m_networkManager;
     QString m_statusMessage;
-    QString m_localDatabaseFile; // Initialized in constructor
+    QString m_localDatabaseFile; 
     QSerialPort *m_serialPort = nullptr;
     QStringList m_availableSerialPorts;
     QString m_currentSerialPort;
 
     void updateAvailableSerialPorts();
-    // static QString calculateChecksum(const QString &str); // Helper for serial commands
+    QVariantMap parseNorDetails(const QByteArray &fileData); 
+    QByteArray applyNorModifications(QByteArray originalData, const QVariantMap &modifications); 
 };
 
 #endif // BACKEND_H
