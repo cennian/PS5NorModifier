@@ -23,6 +23,8 @@ qt_add_qml_module(PS5NorModifierApp
     VERSION 1.0
     QML_FILES
         qml/Main.qml
+        qml/StyledButton.qml
+        qml/ThemeToggleSwitch.qml
 )
 
 target_link_libraries(PS5NorModifierApp PRIVATE
